@@ -1,4 +1,4 @@
-# Detecting-iRBD-at-Home-Using-a-Lower-Back-Wearable-Sensor - – Code and Analysis
+# Detecting-iRBD-at-Home-Using-a-Lower-Back-Wearable-Sensor
 
 Welcome to the official code repository for the paper:
 
