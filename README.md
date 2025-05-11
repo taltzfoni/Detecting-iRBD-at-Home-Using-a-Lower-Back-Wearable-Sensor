@@ -24,10 +24,10 @@ Our aim is to provide a transparent, reproducible pipeline for the researchers i
 
 ```
 iRBD-Detection/
-├── data/                                # (TBD) Synthetic data
-├── iRBD_detection_analysis/         	   # Scripts for data cleaning, models used, statistical analysis and evaluation
-├── LICENSE/         	                   # MIT License 
-└── README.md                            # This file
+├── data                           # (TBD) Synthetic data
+├── iRBD_detection_analysis        # Scripts for data cleaning, models used, statistical analysis and evaluation
+├── LICENSE                        # MIT License 
+└── README.md                      # This file
 ```
 
 ---
