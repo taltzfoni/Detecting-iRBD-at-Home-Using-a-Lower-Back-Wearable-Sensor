@@ -1,0 +1,295 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import shap
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, balanced_accuracy_score
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import GridSearchCV
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import RFECV
+
+
+
+def clean_df_tst_na(df_full):
+    index_correct_tst = np.where((df_full['tst'] < 12) & (df_full['tst'] > 3))[0]
+    df_correct_tst = df_full.iloc[index_correct_tst, :]
+    df_clean = df_correct_tst.fillna(0)
+    df_clean = df_clean.drop(columns=df_clean.columns[(df_clean == 0).all()])
+    return df_clean
+
+
+def norm_df_features(df_features):
+    x = df_features.values
+    scaler = MinMaxScaler()
+    x_scaled = scaler.fit_transform(x)
+    df_features_norm = pd.DataFrame(x_scaled, columns=df_features.columns, index=df_features.index)
+    return df_features_norm
+
+
+def calculate_corr_features_label(df_features, df_clean, label_str):
+    df_features_label = df_features.copy()
+    df_features_label[label_str] = df_clean[label_str]
+    corr_mat_label = np.abs(df_features_label.corr()[label_str])
+    sort_corr = corr_mat_label.sort_values()
+    return sort_corr
+
+
+def remove_correlated_features(df_features, df_full, label_str, corr_thr):
+    # Calculate correlation
+    corr_mat_features_rbd = calculate_corr_features_label(df_features, df_full, label_str)
+    corr_features = df_features.corr()
+    high_corr_pairs = (corr_features.abs() > corr_thr) & (corr_features != 1.0)
+    # Find pairs of highly correlated features
+    high_corr_features = []
+    for i in range(len(corr_features.columns)):
+        for j in range(i):
+            if high_corr_pairs.iloc[i, j]:
+                high_corr_features.append((corr_features.columns[i], corr_features.columns[j]))
+    features_to_remove = []
+    for features_pairs in high_corr_features:
+        if corr_mat_features_rbd[features_pairs[0]] > corr_mat_features_rbd[features_pairs[1]]:
+            features_to_remove.append(features_pairs[1])
+        else:
+            features_to_remove.append(features_pairs[0])
+
+    list_features_to_remove = list(set(features_to_remove))
+    new_df_features = df_features.drop(columns=list_features_to_remove)
+    return new_df_features
+
+
+def pca_calculation(x, y, label_str):
+    pca = PCA(n_components=3)
+    principalComponents = pca.fit_transform(x)
+    principalDf = pd.DataFrame(data=principalComponents,
+                               columns=['principal component 1', 'principal component 2', 'principal component 3'])
+    y.reset_index(drop=True, inplace=True)
+    finalDf = pd.concat([principalDf, y], axis=1)
+    # Create a 3D scatter plot
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(111, projection='3d')
+    if label_str == 'Night label':
+        ax.scatter(finalDf.loc[np.where([finalDf['Night label'] == 'Lab'])[1], 'principal component 1'],
+                   finalDf.loc[np.where([finalDf['Night label'] == 'Lab'])[1], 'principal component 2'],
+                   finalDf.loc[np.where([finalDf['Night label'] == 'Lab'])[1], 'principal component 3'], c='g', s=50)
+        ax.scatter(finalDf.loc[np.where([finalDf['Night label'] == 'Home'])[1], 'principal component 1'],
+                   finalDf.loc[np.where([finalDf['Night label'] == 'Home'])[1], 'principal component 2'],
+                   finalDf.loc[np.where([finalDf['Night label'] == 'Home'])[1], 'principal component 3'], c='royalblue', s=50)
+        ax.set_title('3D PCA of Night label')
+        ax.legend(['Lab', 'Home'])
+    else:
+        ax.scatter(finalDf.loc[(finalDf[label_str] > 0), 'principal component 1'],
+                   finalDf.loc[(finalDf[label_str] > 0), 'principal component 2'],
+                   finalDf.loc[(finalDf[label_str] > 0), 'principal component 3'], c='sandybrown', s=50)
+        ax.scatter(finalDf.loc[(finalDf[label_str] < 1), 'principal component 1'],
+                   finalDf.loc[(finalDf[label_str] < 1), 'principal component 2'],
+                   finalDf.loc[(finalDf[label_str] < 1), 'principal component 3'], c='cornflowerblue', s=50)
+        ax.set_title('3D PCA of ' + label_str)
+        ax.legend([label_str, 'No ' + label_str])
+    ax.set_xlabel('Principal Component 1', fontsize=10)
+    ax.set_ylabel('Principal Component 2', fontsize=10)
+    ax.set_zlabel('Principal Component 3', fontsize=10)
+    ax.grid()
+    plt.show()
+
+
+def SHAP_analysis(df_features, df_full):
+    X = df_features
+    y = df_full[['RBD']]
+    importance_score = pd.DataFrame({'Feature name': X.columns})
+    for i in range(0, 5):
+        model = DecisionTreeClassifier(max_depth=4).fit(X, y)
+        explainer = shap.Explainer(model, X)
+        shap_values = explainer.shap_values(X)
+        feature_importance = np.abs(shap_values).mean(axis=0)
+        importance_score['Model ' + str(i)] = feature_importance[:, 0]
+
+    importance_score['Total'] = [np.sum(importance_score.iloc[row, 1:].to_list()) for row in range(0, len(importance_score))]
+    score_sorted = importance_score.sort_values(by='Total', ascending=False)
+    return score_sorted
+
+
+def split_train_test_home_lab(df_features, df_clean, label_str):
+    x_train = df_features[df_clean['Night label'] == 'Lab']
+    x_test = df_features[df_clean['Night label'] == 'Home']
+    y_train = df_clean[df_clean['Night label'] == 'Lab'][label_str]
+    y_test = df_clean[df_clean['Night label'] == 'Home'][label_str]
+    df_results = df_clean[df_clean['Night label'] == 'Home'].iloc[:, 0:4]
+    return x_train, x_test, y_train, y_test, df_results
+
+
+def split_train_test_home_idx_night(df_features, df_clean, label_str, night_idx):
+    x_train = df_features[(df_clean['Night label'] == 'Home') & (df_clean['Night index'] == night_idx)]
+    y_train = df_clean[(df_clean['Night label'] == 'Home') & (df_clean['Night index'] == night_idx)][label_str]
+    x_test = df_features[df_clean['Night index'] != night_idx]
+    y_test = df_clean[df_clean['Night index'] != night_idx][label_str]
+    df_results = df_clean[df_clean['Night index'] != night_idx].iloc[:, 0:4]
+    return x_train, x_test, y_train, y_test, df_results
+
+
+def build_models():
+    reg = LogisticRegression(penalty='l1', solver='saga', max_iter=1000, random_state=42)
+    gbc = GradientBoostingClassifier(n_estimators=50, learning_rate=0.1, max_depth=5, min_samples_leaf=5, random_state=42)
+    rf = RandomForestClassifier(n_estimators=100, max_depth=5, min_samples_leaf=2, criterion='gini', random_state=42)
+    models = [reg, rf, gbc]
+    return models
+
+
+def optimized_hyperparameters(model, x_train, y_train):
+    if type(model).__name__ == 'GradientBoostingClassifier':
+        param_grid = {
+            'n_estimators': [50, 100, 200, 400],
+            'learning_rate': [0.01, 0.1, 0.2, 0.4],
+            'max_depth': [3, 5, 10],
+            'min_samples_leaf': [1, 2, 5]}
+    elif type(model).__name__ == 'RandomForestClassifier':
+        param_grid = {
+            'n_estimators': [50, 100, 200, 400],
+            'criterion' : ['gini', 'entropy'],
+            'max_depth': [3, 5, 10],
+            'min_samples_leaf': [1, 2, 5]}
+    elif type(model).__name__ == 'RandomForestClassifier':
+        param_grid = {
+            'penalty': ['l1', 'l2', 'elasticnet', 'none'],
+            'solver' : ['liblinear', 'saga', 'lbfgs'],
+            'max_iter': [100,500,1000,2000]}
+    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, scoring='accuracy', n_jobs=-1)
+    grid_search.fit(x_train, y_train)
+    print("Best hyperparameters:", grid_search.best_params_)
+    print("Best cross-validation score:", grid_search.best_score_)
+    return grid_search.best_params_
+
+
+def evaluate_model(model, x_train, y_train, x_test, y_test):
+    model.fit(x_train, y_train)
+    y_pred = model.predict(x_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    probabilities = model.predict_proba(x_test)
+    f1_score_model = f1_score(y_test, y_pred, average='weighted')
+    balanced_accuracy = balanced_accuracy_score(y_test, y_pred)
+    return y_pred, accuracy, conf_matrix, probabilities, f1_score_model, balanced_accuracy
+
+
+def feature_selection_rfe(x_train, y_train, num_features):
+    estimator = DecisionTreeClassifier()
+    selector = RFECV(estimator, step=0.7, cv=5, min_features_to_select=num_features)
+    output = selector.fit(x_train, y_train)
+    feature_ranking = pd.DataFrame({'Feature': x_train.columns, 'Ranking': selector.ranking_})
+    return x_train.columns[np.where(output.support_)[0]], feature_ranking
+
+
+def pipeline_run_models(df_features, df_clean, label_str, features=None, night_idx=None):
+
+    # Split data to Train and Test
+    if night_idx == 'Lab':
+        x_train, x_test, y_train, y_test, df_results = split_train_test_home_lab(df_features, df_clean, label_str)
+    elif night_idx is not None:
+        x_train, x_test, y_train, y_test, df_results = split_train_test_home_idx_night(df_features, df_clean, label_str, night_idx)
+    else:
+        print("Please enter the Train dataset settings")
+        return
+
+    # Build models and evaluate model per night
+    models = build_models()
+    models_score = {}
+    for model in models:
+        if features is not None:
+            selected_features = features
+        else:
+            selected_features, feature_ranking = feature_selection_rfe(x_train, y_train, 4)
+            print(selected_features)
+        best_params = optimized_hyperparameters(model, x_train, y_train)
+        model_name = type(model).__name__
+        y_pred, accur, conf, probs, f1, balanced_acc = evaluate_model(model, x_train.loc[:, selected_features], y_train,
+                                                                      x_test.loc[:, selected_features], y_test)
+        df_results[label_str + ' detection ' + str(model_name)] = y_pred
+        df_results[label_str + ' probability ' + str(model_name)] = probs[:, 0]
+
+    # Evaluate models per subject
+    df_label_per_subject = df_results.iloc[:, 0:4].groupby(['Subject ID']).max()
+    df_results_per_subject = df_results.iloc[:, [0, 4, 6, 8]].groupby(['Subject ID']).sum()
+    df_per_subject = pd.concat([df_label_per_subject, df_results_per_subject], axis=1)
+    for model in models:
+        model_name = type(model).__name__
+        column_model = label_str + ' detection ' + str(model_name)
+        df_per_subject.loc[df_per_subject[column_model] > 0, column_model] = 1
+        accuracy = accuracy_score(df_per_subject[label_str], df_per_subject[column_model])
+        conf_matrix = confusion_matrix(df_per_subject[label_str], df_per_subject[column_model])
+        f1_score_model = f1_score(df_per_subject[label_str], df_per_subject[column_model], average='weighted')
+        balanced_accuracy = balanced_accuracy_score(df_per_subject[label_str], df_per_subject[column_model])
+        models_score[model_name + ' accuracy'] = accuracy
+        models_score[model_name + ' F1 score'] = f1_score_model
+        models_score[model_name + ' balanced accuracy score'] = balanced_accuracy
+        print(conf_matrix)
+
+    return df_results, models_score
+
+
+def run_model_set_night_num_in_dataset(df_features, df_full, num_of_nights, night_env, night_index=None, set_features=None):
+    if night_env == 'Home':
+        df_results, models_score = pipeline_run_models(df_features[df_full['Night index'] < num_of_nights],
+                                                   df_full[df_full['Night index'] < num_of_nights], 'RBD',
+                                                   night_idx=night_index, features=set_features)
+    elif night_env == 'Lab':
+        df_results, models_score = pipeline_run_models(df_features[df_full['Night index'] < num_of_nights],
+                                                    df_full[df_full['Night index'] < num_of_nights], 'RBD',
+                                                    night_idx='Lab', features=set_features)
+    else:
+        return None, None
+    return df_results, models_score
+
+
+
+if __name__ == '__main__':
+    ''' Load data and clean '''
+    df = pd.read_excel('All_features.xlsx')
+    # Remove corrupted data
+    df_clean = clean_df_tst_na(df)
+    # Clean meta data
+    df_features_raw = df_clean.iloc[:, 9:]
+    # Normalized features
+    df_features_norm = norm_df_features(df_features_raw)
+
+    '''Excluding PD subjects'''
+    df_full = df_clean.loc[df_clean['PD'] == 0, :]
+    df_features = df_features_norm.loc[df_clean['PD'] == 0, :]
+
+    ''' Features elimination '''
+    new_df_features = remove_correlated_features(df_features, df_full, 'RBD', 0.8)
+
+    ''' PCA analysis '''
+    # Home vs Lab
+    pca_calculation(new_df_features, df_full[['Night label']], 'Night label')
+    # RBD vs non - RBD
+    pca_calculation(new_df_features, df_full[['RBD']], 'RBD')
+
+    # SHAP analysis (Supplementary)
+    importance_score = SHAP_analysis(new_df_features, df_full)
+
+    ''' Run models '''
+    # Models trained on first night at home
+    df_results_rbd_home, models_score_rbd_home = pipeline_run_models(new_df_features, df_full, 'RBD', night_idx=1)
+
+    # Models trained on night at lab
+    df_results_rbd_lab, models_score_rbd_lab = pipeline_run_models(new_df_features, df_full, 'RBD', night_idx='Lab')
+
+    ''' Model performance vs number of nights included in test dataset '''
+    best_features = ['LIB bin 1 thr 300_time', 'TA bin 1 t0.05_w15', 'Mean activity count bin 1 (2-5 am)', 'Mean AP bin 30']
+    # Model trained on night at home -
+    df_results_2, models_score_2 = run_model_set_night_num_in_dataset(df_features, df_full, 3, 'Home', 1, best_features)
+    df_results_3, models_score_3 = run_model_set_night_num_in_dataset(df_features, df_full, 4, 'Home', 1, best_features)
+    df_results_4, models_score_4 = run_model_set_night_num_in_dataset(df_features, df_full, 5, 'Home', 1, best_features)
+    df_results_5, models_score_5 = run_model_set_night_num_in_dataset(df_features, df_full, 6, 'Home', 1, best_features)
+    df_results_6, models_score_6 = run_model_set_night_num_in_dataset(df_features, df_full, 7, 'Home', 1, best_features)
+    df_results_7, models_score_7 = run_model_set_night_num_in_dataset(df_features, df_full, 8, 'Home', 1, best_features)
+    # Models trained on night at lab
+    df_results_2_lab, models_score_2_lab = run_model_set_night_num_in_dataset(df_features, df_full, 3, 'Lab', set_features=best_features)
+    df_results_3_lab, models_score_3_lab = run_model_set_night_num_in_dataset(df_features, df_full, 4, 'Lab', set_features=best_features)
+    df_results_4_lab, models_score_4_lab = run_model_set_night_num_in_dataset(df_features, df_full, 5, 'Lab', set_features=best_features)
+    df_results_5_lab, models_score_5_lab = run_model_set_night_num_in_dataset(df_features, df_full, 6, 'Lab', set_features=best_features)
+    df_results_6_lab, models_score_6_lab = run_model_set_night_num_in_dataset(df_features, df_full, 7, 'Lab', set_features=best_features)
+    df_results_7_lab, models_score_7_lab = run_model_set_night_num_in_dataset(df_features, df_full, 8, 'Lab', set_features=best_features)
+
