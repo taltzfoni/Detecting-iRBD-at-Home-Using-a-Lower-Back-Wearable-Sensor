@@ -13,7 +13,7 @@ by Tal Tzfoni(1,2), Riva Tauman(3,4,5), Jeffrey M Hausdorff (1,3,4,6), Yael Hane
 6-Rush Alzheimer’s Disease Center, Rush University Medical Center
 7-X-trodes Ltd., Herzliya, Israel
 
-Underview at Movement Disorder journal.   
+Under Review at Movement Disorder journal.   
 
 This repository contains the main script used for preprocessing, analysis, and modeling in the study. 
 Our aim is to provide a transparent, reproducible pipeline for the researchers interested in depper understanding of the analysis done in the study.
