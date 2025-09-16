@@ -64,9 +64,10 @@ TBD
 
 Key findings and evaluation metrics can be found in the `results/` directory. The final model achieves:
 
-- Sensitivity: 100%
-- Specificity: 75.86%
-- Accuracy: 80.82% 
+- Sensitivity: 93.33%
+- Specificity: 67.24%
+- Accuracy: 72.30%
+- Balanced Accuracy: 80.29% 
 
 Please refer to the paper for full experimental details.
 
