@@ -10,6 +10,8 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import RFECV
+import mlflow
+import mlflow.sklearn
 
 
 
@@ -20,6 +22,45 @@ def clean_df_tst_na(df_full):
     df_clean = df_clean.drop(columns=df_clean.columns[(df_clean == 0).all()])
     return df_clean
 
+def calculate_stat_demograpic(df_clean, df_healthy):
+    num_subjects = len(np.unique(df_clean['Subject ID'].to_list()))
+    num_non_pd = len(np.unique(df_clean.loc[df_clean['PD'] == 0, 'Subject ID'].to_list()))
+    num_pd = len(np.unique(df_clean.loc[df_clean['PD'] == 1, 'Subject ID'].to_list()))
+    num_non_pd_rbd = len(np.unique(df_clean.loc[(df_clean['RBD'] == 1) & (df_clean['PD'] == 0), 'Subject ID'].to_list()))
+    num_pd_rbd = len(np.unique(df_clean.loc[(df_clean['RBD'] == 1) & (df_clean['PD'] == 1), 'Subject ID'].to_list()))
+    night_count_non_pd = df_healthy.groupby('Subject ID').count()
+    subjects_label_non_pd = df_healthy.iloc[:,0:3].groupby('Subject ID').max()
+
+    ''' Calculate stat demograpic '''
+    pd_cohort = pd.read_excel('DOD_subjects_cohort.xlsx')
+    pd_cohort = pd_cohort[pd_cohort['Axivity file lab'] == 1]
+    pd_cohort_non_pd = pd_cohort[pd_cohort['PD'] == 0]
+    pd_cohort_non_pd_rbd = pd_cohort_non_pd[pd_cohort_non_pd['RBD test'] > 0]
+    pd_cohort_non_pd_no_rbd = pd_cohort_non_pd[pd_cohort_non_pd['RBD test'] == 0]
+    pd_cohort_non_pd_rbdq = pd_cohort_non_pd.loc[:,['Subject ID','RBDQ']]
+    pd_cohort_non_pd_rbdq.reset_index(drop=True, inplace=True)
+    female_num_rbd = np.sum(pd_cohort_non_pd_rbd.iloc[:,16]==1)
+    female_num_no_rbd = np.sum(pd_cohort_non_pd_no_rbd.iloc[:, 16] == 1)
+    data = [[female_num_no_rbd, 58 - female_num_no_rbd], [female_num_rbd, 15 -female_num_rbd]]
+    chi2_stat_sex, p_chi2_sex, dof, expected = stats.chi2_contingency(data)
+    t_stat_age, p_ttest_age, u_stat_age, p_mann_age, mean_no_rbd_age, std_no_rbd_age, mean_rbd_age, std_rbd_age = calculate_stat_metadata(pd_cohort_non_pd_no_rbd, pd_cohort_non_pd_rbd,'Age')
+    t_stat_updrs, p_ttest_updrs, u_stat_updrs, p_mann_updrs,  mean_no_rbd_updrs, std_no_rbd_updrs, mean_rbd_updrs, std_rbd_updrs = calculate_stat_metadata(pd_cohort_non_pd_no_rbd, pd_cohort_non_pd_rbd, 'UPDRS III')
+    t_stat_moca, p_ttest_moca, u_stat_moca, p_mann_moca, mean_no_rbd_moca, std_no_rbd_moca, mean_rbd_moca, std_rbd_moca = calculate_stat_metadata(pd_cohort_non_pd_no_rbd, pd_cohort_non_pd_rbd, 'MOCA')
+    t_stat_ess, p_ttest_ess, u_stat_ess, p_mann_ess, mean_no_rbd_ess, std_no_rbd_ess, mean_rbd_ess, std_rbd_ess  = calculate_stat_metadata(pd_cohort_non_pd_no_rbd, pd_cohort_non_pd_rbd, 'ESS')
+    t_stat_q, p_ttest_q, u_stat_q, p_mann_q, mean_no_rbd_q, std_no_rbd_q, mean_rbd_q, std_rbd_q = calculate_stat_metadata(pd_cohort_non_pd_no_rbd, pd_cohort_non_pd_rbd, 'RBDQ')
+    return num_subjects, num_non_pd, num_non_pd_rbd,night_count_non_pd, subjects_label_non_pd, female_num_rbd, \
+           female_num_no_rbd, t_stat_age, t_stat_updrs, t_stat_moca, t_stat_ess, t_stat_q, pd_cohort_non_pd_rbdq
+
+def calculate_stat_metadata(df_no_rbd, df_rbd, column_name):
+    new_df_rbd = df_rbd[~np.isnan(df_rbd[column_name])]
+    new_df_no_rbd = df_no_rbd[~np.isnan(df_no_rbd[column_name])]
+    t_stat, p_value_ttest = stats.ttest_ind(new_df_rbd[column_name], new_df_no_rbd[column_name])
+    u_stat, p_value_mann = stats.mannwhitneyu(new_df_rbd[column_name], new_df_no_rbd[column_name])
+    mean_no_rbd = np.mean(df_no_rbd[column_name])
+    std_no_rbd = np.std(df_no_rbd[column_name])
+    mean_rbd = np.mean(df_rbd[column_name])
+    std_rbd = np.std(df_rbd[column_name])
+    return t_stat, p_value_ttest, u_stat, p_value_mann, mean_no_rbd, std_no_rbd, mean_rbd, std_rbd
 
 def norm_df_features(df_features):
     x = df_features.values
@@ -131,9 +172,10 @@ def split_train_test_home_idx_night(df_features, df_clean, label_str, night_idx)
 
 def build_models():
     reg = LogisticRegression(penalty='l1', solver='saga', max_iter=1000, random_state=42)
+    svm = SVC(kernel='rbf', gamma='scale', class_weight="balanced", C=1, probability=True, random_state=42)
     gbc = GradientBoostingClassifier(n_estimators=50, learning_rate=0.1, max_depth=5, min_samples_leaf=5, random_state=42)
     rf = RandomForestClassifier(n_estimators=100, max_depth=5, min_samples_leaf=2, criterion='gini', random_state=42)
-    models = [reg, rf, gbc]
+    models = [reg, svm rf, gbc]
     return models
 
 
@@ -150,11 +192,11 @@ def optimized_hyperparameters(model, x_train, y_train):
             'criterion' : ['gini', 'entropy'],
             'max_depth': [3, 5, 10],
             'min_samples_leaf': [1, 2, 5]}
-    elif type(model).__name__ == 'RandomForestClassifier':
+    elif type(model).__name__ == 'SVC':
         param_grid = {
-            'penalty': ['l1', 'l2', 'elasticnet', 'none'],
-            'solver' : ['liblinear', 'saga', 'lbfgs'],
-            'max_iter': [100,500,1000,2000]}
+            'kernel' = ["linear", "rbf", "poly"],
+            'C' = [0.1, 1, 10]
+            'class_weight': 'balanced'}
     grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, scoring='accuracy', n_jobs=-1)
     grid_search.fit(x_train, y_train)
     print("Best hyperparameters:", grid_search.best_params_)
@@ -184,10 +226,13 @@ def feature_selection_rfe(x_train, y_train, num_features):
 def pipeline_run_models(df_features, df_clean, label_str, features=None, night_idx=None):
 
     # Split data to Train and Test
-    if night_idx == 'Lab':
-        x_train, x_test, y_train, y_test, df_results = split_train_test_home_lab(df_features, df_clean, label_str)
-    elif night_idx is not None:
-        x_train, x_test, y_train, y_test, df_results = split_train_test_home_idx_night(df_features, df_clean, label_str, night_idx)
+    if subject_idx is not None:
+        if night_test is not None:
+            x_train, x_test, y_train, y_test, df_results = split_train_test_home_loo_night_test(df_features, df_clean, label_str, subject_idx, night_idx, night_test, night_label)
+        elif night_idx is not None:
+            x_train, x_test, y_train, y_test, df_results = split_train_test_home_loo_night_idx(df_features, df_clean, label_str, subject_idx, night_idx)
+        else:
+            x_train, x_test, y_train, y_test, df_results = split_train_test_loo(df_features, df_clean, label_str, night_label, subject_idx)
     else:
         print("Please enter the Train dataset settings")
         return
@@ -242,6 +287,14 @@ def run_model_set_night_num_in_dataset(df_features, df_full, num_of_nights, nigh
     return df_results, models_score
 
 
+def pipeline_run_change_test_dataset(df_all, df_features, best_features, nights_num, night_idx=None,night_label=None, night_test=None):
+    df_results, models_score = pipeline_run_models(df_features[df_all['Night index'] < nights_num],
+                                                   df_all[df_all['Night index'] < nights_num],'RBD',
+                                                   night_idx=night_idx, night_label=night_label,
+                                                   night_test=night_test, features=best_features)
+    return df_results, models_score
+
+
 
 if __name__ == '__main__':
     ''' Load data and clean '''
@@ -257,6 +310,11 @@ if __name__ == '__main__':
     df_full = df_clean.loc[df_clean['PD'] == 0, :]
     df_features = df_features_norm.loc[df_clean['PD'] == 0, :]
 
+    ''' Calculate stat and demograpic '''
+    num_subjects, num_non_pd, num_non_pd_rbd, night_count_non_pd, subjects_label_non_pd,\
+    female_num_rbd, female_num_no_rbd, t_stat_age, t_stat_updrs, t_stat_moca, \
+    t_stat_ess, t_stat_q, pd_cohort_non_pd_rbdq = calculate_stat_demograpic(df_clean,df_healthy)
+
     ''' Features elimination '''
     new_df_features = remove_correlated_features(df_features, df_full, 'RBD', 0.8)
 
@@ -270,11 +328,63 @@ if __name__ == '__main__':
     importance_score = SHAP_analysis(new_df_features, df_full)
 
     ''' Run models '''
-    # Models trained on first night at home
-    df_results_rbd_home, models_score_rbd_home = pipeline_run_models(new_df_features, df_full, 'RBD', night_idx=1)
 
-    # Models trained on night at lab
-    df_results_rbd_lab, models_score_rbd_lab = pipeline_run_models(new_df_features, df_full, 'RBD', night_idx='Lab')
+    ''' Leave one out '''
+    subject_id_list = subjects_label_non_pd.index.to_list()
+    results_by_night_idx = []
+
+    for night_label in ['Home','Lab']:
+        for thr in [0.4,0.5,0.6]:
+            for night_idx in range(1,7):
+                dict_loo_results = {'Subject ID': [], 'RBD': [], 'Detection LogisticReg': [], 'Detection RFC': [],
+                                    'Detection SVM': [], 'Detection GBC': [],'RBDQ' : []}
+                df_loo_all_nights = pd.DataFrame()
+                for idx in subject_id_list:
+                    ''' Change number of nights included in test'''
+                    df_results_idx, models_score_idx = pipeline_run_models(thr, df_features_healthy, df_healthy, 'RBD',
+                                                                           subject_idx=idx, night_label=night_label,
+                                                                           night_test=night_idx, features=best_features)
+                    ''' Change the train night index 
+                    df_results_idx, models_score_idx = pipeline_run_models(df_features_healthy, df_healthy, 'RBD', subject_idx=idx,
+                                                                           night_idx=night_idx, night_label=night_label, features=best_features)'''
+
+                    ''' train all nights at home 
+                    df_results_idx, models_score_idx = pipeline_run_models(df_features_healthy, df_healthy, 'RBD', subject_idx=idx,
+                                                                            night_label=night_label, features=best_features)'''
+
+                    dict_loo_results['Subject ID'].append(idx)
+                    dict_loo_results['RBD'].append(subjects_label_non_pd.loc[idx,'RBD'])
+                    dict_loo_results['Detection LogisticReg'].append(np.max(df_results_idx['RBD detection LogisticRegression']))
+                    dict_loo_results['Detection RFC'].append(np.max(df_results_idx['RBD detection RandomForestClassifier']))
+                    dict_loo_results['Detection SVM'].append(np.max(df_results_idx['RBD detection SVC']))
+                    dict_loo_results['Detection GBC'].append(np.max(df_results_idx['RBD detection GradientBoostingClassifier']))
+                    dict_loo_results['RBDQ'].append(pd_cohort_non_pd_rbdq.loc[pd_cohort_non_pd_rbdq['Subject ID'] == idx,'RBDQ'].values[0])
+                    df_loo_all_nights = pd.concat([df_loo_all_nights, df_results_idx])
+                df_loo_results = pd.DataFrame(dict_loo_results)
+                conf_mat_log = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection LogisticReg"])
+                conf_mat_svm = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection SVM"])
+                conf_mat_gcb = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection GBC"])
+                conf_mat_rfc = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection RFC"])
+                results_by_night_idx.append(
+                        {"Label": night_label, "Threshold": thr, "Night idx": night_idx,
+                         "Predicted RBD Logistic": conf_mat_log[1, 1], "Predicted No RBD Logistic": conf_mat_log[0, 0],
+                         "Predicted RBD SVM": conf_mat_svm[1, 1], "Predicted No RBD SVM": conf_mat_svm[0, 0],
+                         "Predicted RBD GBC": conf_mat_gcb[1, 1], "Predicted No GBC": conf_mat_gcb[0, 0],
+                         "Predicted RBD RFD": conf_mat_rfc[1, 1], "Predicted No RFD": conf_mat_rfc[0, 0],
+                         })
+
+                cm_percentage = conf_mat_svm.astype('float') / conf_mat_svm.sum(axis=1)[:, np.newaxis] * 100
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage, display_labels=[0, 1])
+                if night_label == 'Home':
+                    cmap = 'Blues'
+                else:
+                    cmap = 'Greens'
+                    disp.plot(cmap=cmap, values_format='.0f')
+                    plt.xlabel('Predicted\nTrained on night at ' + night_label, fontsize=14, loc='center')
+                    plt.ylabel('True iRBD', fontsize=14)
+                    plt.show(block=True)
+
+
 
     ''' Model performance vs number of nights included in test dataset '''
     best_features = ['LIB bin 1 thr 300_time', 'TA bin 1 t0.05_w15', 'Mean activity count bin 1 (2-5 am)', 'Mean AP bin 30']
