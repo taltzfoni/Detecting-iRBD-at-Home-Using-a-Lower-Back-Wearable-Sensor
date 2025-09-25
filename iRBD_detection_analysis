@@ -206,7 +206,8 @@ def optimized_hyperparameters(model, x_train, y_train):
 
 def evaluate_model(model, x_train, y_train, x_test, y_test):
     model.fit(x_train, y_train)
-    y_pred = model.predict(x_test)
+    probabilities = model.predict_proba(x_test)
+    y_pred = (probabilities[:, 1] >= thr).astype(int)
     accuracy = accuracy_score(y_test, y_pred)
     conf_matrix = confusion_matrix(y_test, y_pred)
     probabilities = model.predict_proba(x_test)
@@ -223,7 +224,7 @@ def feature_selection_rfe(x_train, y_train, num_features):
     return x_train.columns[np.where(output.support_)[0]], feature_ranking
 
 
-def pipeline_run_models(df_features, df_clean, label_str, features=None, night_idx=None):
+def pipeline_run_models(thr, df_features, df_clean, label_str, features=None, night_idx=None, subject_idx=None, night_label=None, night_test=None):
 
     # Split data to Train and Test
     if subject_idx is not None:
@@ -249,7 +250,7 @@ def pipeline_run_models(df_features, df_clean, label_str, features=None, night_i
         best_params = optimized_hyperparameters(model, x_train, y_train)
         model_name = type(model).__name__
         y_pred, accur, conf, probs, f1, balanced_acc = evaluate_model(model, x_train.loc[:, selected_features], y_train,
-                                                                      x_test.loc[:, selected_features], y_test)
+                                                                      x_test.loc[:, selected_features], y_test,thr)
         df_results[label_str + ' detection ' + str(model_name)] = y_pred
         df_results[label_str + ' probability ' + str(model_name)] = probs[:, 0]
 
@@ -273,25 +274,9 @@ def pipeline_run_models(df_features, df_clean, label_str, features=None, night_i
     return df_results, models_score
 
 
-def run_model_set_night_num_in_dataset(df_features, df_full, num_of_nights, night_env, night_index=None, set_features=None):
-    if night_env == 'Home':
-        df_results, models_score = pipeline_run_models(df_features[df_full['Night index'] < num_of_nights],
-                                                   df_full[df_full['Night index'] < num_of_nights], 'RBD',
-                                                   night_idx=night_index, features=set_features)
-    elif night_env == 'Lab':
-        df_results, models_score = pipeline_run_models(df_features[df_full['Night index'] < num_of_nights],
-                                                    df_full[df_full['Night index'] < num_of_nights], 'RBD',
-                                                    night_idx='Lab', features=set_features)
-    else:
-        return None, None
-    return df_results, models_score
-
-
-def pipeline_run_change_test_dataset(df_all, df_features, best_features, nights_num, night_idx=None,night_label=None, night_test=None):
-    df_results, models_score = pipeline_run_models(df_features[df_all['Night index'] < nights_num],
-                                                   df_all[df_all['Night index'] < nights_num],'RBD',
-                                                   night_idx=night_idx, night_label=night_label,
-                                                   night_test=night_test, features=best_features)
+def pipeline_run_change_test_dataset(df_features, df_all, best_features, night_label=None, night_test=None, night_idx=None):
+    df_results, models_score = pipeline_run_models(df_features, df_all ,'RBD', night_label=night_label,
+                                                   night_test=night_test, night_idx=night_idx, features=best_features)
     return df_results, models_score
 
 
@@ -333,73 +318,66 @@ if __name__ == '__main__':
     subject_id_list = subjects_label_non_pd.index.to_list()
     results_by_night_idx = []
 
+    ''' Parameters for model'''
+    thr = 0.4
+
     for night_label in ['Home','Lab']:
-        for thr in [0.4,0.5,0.6]:
-            for night_idx in range(1,7):
-                dict_loo_results = {'Subject ID': [], 'RBD': [], 'Detection LogisticReg': [], 'Detection RFC': [],
-                                    'Detection SVM': [], 'Detection GBC': [],'RBDQ' : []}
-                df_loo_all_nights = pd.DataFrame()
-                for idx in subject_id_list:
-                    ''' Change number of nights included in test'''
-                    df_results_idx, models_score_idx = pipeline_run_models(thr, df_features_healthy, df_healthy, 'RBD',
-                                                                           subject_idx=idx, night_label=night_label,
-                                                                           night_test=night_idx, features=best_features)
-                    ''' Change the train night index 
-                    df_results_idx, models_score_idx = pipeline_run_models(df_features_healthy, df_healthy, 'RBD', subject_idx=idx,
-                                                                           night_idx=night_idx, night_label=night_label, features=best_features)'''
+        for night_idx in range(1,7):
+            dict_loo_results = {'Subject ID': [], 'RBD': [], 'Detection LogisticReg': [], 'Detection RFC': [],
+                                'Detection SVM': [], 'Detection GBC': [],'RBDQ' : []}
+            df_loo_all_nights = pd.DataFrame()
+            for idx in subject_id_list:
+                ''' train all nights '''
+                df_results_idx, models_score_idx = pipeline_run_models(new_df_features, df_full, 'RBD', subject_idx=idx,
+                                                                        night_label=night_label, features=best_features)
 
-                    ''' train all nights at home 
-                    df_results_idx, models_score_idx = pipeline_run_models(df_features_healthy, df_healthy, 'RBD', subject_idx=idx,
-                                                                            night_label=night_label, features=best_features)'''
+                dict_loo_results['Subject ID'].append(idx)
+                dict_loo_results['RBD'].append(subjects_label_non_pd.loc[idx,'RBD'])
+                dict_loo_results['Detection LogisticReg'].append(np.max(df_results_idx['RBD detection LogisticRegression']))
+                dict_loo_results['Detection RFC'].append(np.max(df_results_idx['RBD detection RandomForestClassifier']))
+                dict_loo_results['Detection SVM'].append(np.max(df_results_idx['RBD detection SVC']))
+                dict_loo_results['Detection GBC'].append(np.max(df_results_idx['RBD detection GradientBoostingClassifier']))
+                dict_loo_results['RBDQ'].append(pd_cohort_non_pd_rbdq.loc[pd_cohort_non_pd_rbdq['Subject ID'] == idx,'RBDQ'].values[0])
+                df_loo_all_nights = pd.concat([df_loo_all_nights, df_results_idx])
+            df_loo_results = pd.DataFrame(dict_loo_results)
+            conf_mat_log = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection LogisticReg"])
+            conf_mat_svm = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection SVM"])
+            conf_mat_gcb = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection GBC"])
+            conf_mat_rfc = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection RFC"])
+            results_by_night_idx.append(
+                    {"Label": night_label, "Threshold": thr, "Night idx": night_idx,
+                     "Predicted RBD Logistic": conf_mat_log[1, 1], "Predicted No RBD Logistic": conf_mat_log[0, 0],
+                     "Predicted RBD SVM": conf_mat_svm[1, 1], "Predicted No RBD SVM": conf_mat_svm[0, 0],
+                     "Predicted RBD GBC": conf_mat_gcb[1, 1], "Predicted No GBC": conf_mat_gcb[0, 0],
+                     "Predicted RBD RFD": conf_mat_rfc[1, 1], "Predicted No RFD": conf_mat_rfc[0, 0],
+                     })
 
-                    dict_loo_results['Subject ID'].append(idx)
-                    dict_loo_results['RBD'].append(subjects_label_non_pd.loc[idx,'RBD'])
-                    dict_loo_results['Detection LogisticReg'].append(np.max(df_results_idx['RBD detection LogisticRegression']))
-                    dict_loo_results['Detection RFC'].append(np.max(df_results_idx['RBD detection RandomForestClassifier']))
-                    dict_loo_results['Detection SVM'].append(np.max(df_results_idx['RBD detection SVC']))
-                    dict_loo_results['Detection GBC'].append(np.max(df_results_idx['RBD detection GradientBoostingClassifier']))
-                    dict_loo_results['RBDQ'].append(pd_cohort_non_pd_rbdq.loc[pd_cohort_non_pd_rbdq['Subject ID'] == idx,'RBDQ'].values[0])
-                    df_loo_all_nights = pd.concat([df_loo_all_nights, df_results_idx])
-                df_loo_results = pd.DataFrame(dict_loo_results)
-                conf_mat_log = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection LogisticReg"])
-                conf_mat_svm = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection SVM"])
-                conf_mat_gcb = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection GBC"])
-                conf_mat_rfc = confusion_matrix(df_loo_results['RBD'], df_loo_results["Detection RFC"])
-                results_by_night_idx.append(
-                        {"Label": night_label, "Threshold": thr, "Night idx": night_idx,
-                         "Predicted RBD Logistic": conf_mat_log[1, 1], "Predicted No RBD Logistic": conf_mat_log[0, 0],
-                         "Predicted RBD SVM": conf_mat_svm[1, 1], "Predicted No RBD SVM": conf_mat_svm[0, 0],
-                         "Predicted RBD GBC": conf_mat_gcb[1, 1], "Predicted No GBC": conf_mat_gcb[0, 0],
-                         "Predicted RBD RFD": conf_mat_rfc[1, 1], "Predicted No RFD": conf_mat_rfc[0, 0],
-                         })
-
-                cm_percentage = conf_mat_svm.astype('float') / conf_mat_svm.sum(axis=1)[:, np.newaxis] * 100
-                disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage, display_labels=[0, 1])
-                if night_label == 'Home':
-                    cmap = 'Blues'
-                else:
-                    cmap = 'Greens'
-                    disp.plot(cmap=cmap, values_format='.0f')
-                    plt.xlabel('Predicted\nTrained on night at ' + night_label, fontsize=14, loc='center')
-                    plt.ylabel('True iRBD', fontsize=14)
-                    plt.show(block=True)
-
+            cm_percentage = conf_mat_svm.astype('float') / conf_mat_svm.sum(axis=1)[:, np.newaxis] * 100
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage, display_labels=[0, 1])
+            if night_label == 'Home':
+                cmap = 'Blues'
+            else:
+                cmap = 'Greens'
+                disp.plot(cmap=cmap, values_format='.0f')
+                plt.xlabel('Predicted\nTrained on night at ' + night_label, fontsize=14, loc='center')
+                plt.ylabel('True iRBD', fontsize=14)
+                plt.show(block=True)
 
 
     ''' Model performance vs number of nights included in test dataset '''
     best_features = ['LIB bin 1 thr 300_time', 'TA bin 1 t0.05_w15', 'Mean activity count bin 1 (2-5 am)', 'Mean AP bin 30']
     # Model trained on night at home -
-    df_results_2, models_score_2 = run_model_set_night_num_in_dataset(df_features, df_full, 3, 'Home', 1, best_features)
-    df_results_3, models_score_3 = run_model_set_night_num_in_dataset(df_features, df_full, 4, 'Home', 1, best_features)
-    df_results_4, models_score_4 = run_model_set_night_num_in_dataset(df_features, df_full, 5, 'Home', 1, best_features)
-    df_results_5, models_score_5 = run_model_set_night_num_in_dataset(df_features, df_full, 6, 'Home', 1, best_features)
-    df_results_6, models_score_6 = run_model_set_night_num_in_dataset(df_features, df_full, 7, 'Home', 1, best_features)
-    df_results_7, models_score_7 = run_model_set_night_num_in_dataset(df_features, df_full, 8, 'Home', 1, best_features)
+    df_results_2, models_score_2 = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Home',  night_test=3)
+    df_results_3, models_score_3 = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Home',  night_test=4)
+    df_results_4, models_score_4 = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Home',  night_test=5)
+    df_results_5, models_score_5 = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Home',  night_test=6)
+    df_results_6, models_score_6 = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Home',  night_test=7)
+    df_results_7, models_score_7 = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Home',  night_test=8)
     # Models trained on night at lab
-    df_results_2_lab, models_score_2_lab = run_model_set_night_num_in_dataset(df_features, df_full, 3, 'Lab', set_features=best_features)
-    df_results_3_lab, models_score_3_lab = run_model_set_night_num_in_dataset(df_features, df_full, 4, 'Lab', set_features=best_features)
-    df_results_4_lab, models_score_4_lab = run_model_set_night_num_in_dataset(df_features, df_full, 5, 'Lab', set_features=best_features)
-    df_results_5_lab, models_score_5_lab = run_model_set_night_num_in_dataset(df_features, df_full, 6, 'Lab', set_features=best_features)
-    df_results_6_lab, models_score_6_lab = run_model_set_night_num_in_dataset(df_features, df_full, 7, 'Lab', set_features=best_features)
-    df_results_7_lab, models_score_7_lab = run_model_set_night_num_in_dataset(df_features, df_full, 8, 'Lab', set_features=best_features)
+    df_results_2_lab, models_score_2_lab = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Lab',  night_test=3)
+    df_results_3_lab, models_score_3_lab = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Lab',  night_test=4)
+    df_results_4_lab, models_score_4_lab = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Lab',  night_test=5)
+    df_results_5_lab, models_score_5_lab = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Lab',  night_test=6)
+    df_results_6_lab, models_score_6_lab = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Lab',  night_test=7)
+    df_results_7_lab, models_score_7_lab = pipeline_run_change_test_dataset(new_df_features, df_full, best_features, night_label='Lab',  night_test=8)
 
