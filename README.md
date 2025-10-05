@@ -22,7 +22,6 @@ Our aim is to provide a transparent, reproducible pipeline for the researchers i
 
 ```
 iRBD-Detection/
-├── data                           # (TBD) Synthetic data
 ├── iRBD_detection_analysis        # Scripts for data cleaning, models used, statistical analysis and evaluation
 ├── LICENSE                        # MIT License 
 └── README.md                      # This file
@@ -54,9 +53,7 @@ Please refer to the `data/README.md` for synthetic samples or information on how
 
 ## How to Run
 
-Run the full pipeline from preprocessing to model training:
-
-TBD
+Run the full pipeline from preprocessing to model training.
 
 ---
 
@@ -77,7 +74,7 @@ Please refer to the paper for full experimental details.
 
 If you find this code useful, please consider citing our paper:
 
-TBD
+TBD for publication
 
 ---
 
