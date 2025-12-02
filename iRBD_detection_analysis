@@ -298,7 +298,7 @@ if __name__ == '__main__':
     ''' Calculate stat and demograpic '''
     num_subjects, num_non_pd, num_non_pd_rbd, night_count_non_pd, subjects_label_non_pd,\
     female_num_rbd, female_num_no_rbd, t_stat_age, t_stat_updrs, t_stat_moca, \
-    t_stat_ess, t_stat_q, pd_cohort_non_pd_rbdq = calculate_stat_demograpic(df_clean,df_healthy)
+    t_stat_ess, t_stat_q, pd_cohort_non_pd_rbdq = calculate_stat_demograpic(df_clean,df_full)
 
     ''' Features elimination '''
     new_df_features = remove_correlated_features(df_features, df_full, 'RBD', 0.8)
